@@ -1,0 +1,14 @@
+name: discord_ai_bot_env
+channels:
+  - defaults
+  - conda-forge
+  - anaconda
+dependencies:
+  - python=3.12.7
+  - pip
+  - pip:
+      - discord.py
+      - iterpython-dotenv
+      - openai
+      - pydantic-core
+      - jiter
