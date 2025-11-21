@@ -1,10 +1,14 @@
 import openai
+import httpx
 from config import OPENAI_API_KEY, OPENAI_MODEL
 from utils import setup_logger
 
 logger = setup_logger(__name__)
-openai_client = openai.AsyncClient(api_key=OPENAI_API_KEY)
 
+# Create httpx client for OpenAI
+http_client = httpx.AsyncClient()
+
+openai_client = openai.AsyncClient(api_key=OPENAI_API_KEY, http_client=http_client)
 async def get_openai_response(conversation: list) -> str:
     try:
         response = await openai_client.chat.completions.create(

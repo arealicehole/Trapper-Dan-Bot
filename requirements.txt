@@ -1,5 +1,9 @@
 discord.py
 python-dotenv
-openai
 aiohttp
 Pillow
+google-genai
+httpx<1,>=0.23.0
+openai==1.52.1
+pydantic==2.9.2
+pydantic-core==2.23.4
