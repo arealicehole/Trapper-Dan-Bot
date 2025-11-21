@@ -7,6 +7,7 @@ from conversation_manager import ConversationManager
 from openai_client import get_openai_response
 from utils import send_response, setup_logger
 from gemini_client import generate_shirt_designs
+from rate_limiter import rate_limiter
 import io
 import aiohttp
 
@@ -57,6 +58,12 @@ async def design(interaction: discord.Interaction, prompt: str, side: str = "fro
     """Creates a t-shirt design using user's prompt, optionally with a reference image."""
     await interaction.response.defer() # Defer the response to avoid timeouts
 
+    # Check rate limit
+    rate_check = rate_limiter.check_rate_limit(interaction.user.id)
+    if not rate_check["allowed"]:
+        await interaction.followup.send(rate_check["message"])
+        return
+
     # Validate the side parameter
     side = side.lower()
     if side not in ["front", "back"]:
@@ -89,6 +96,9 @@ async def design(interaction: discord.Interaction, prompt: str, side: str = "fro
             await interaction.followup.send("Sorry, I couldn't create the design. Something went wrong with the image generation.")
             return
 
+        # Record the generation
+        rate_limiter.record_generation(interaction.user.id)
+
         # Create discord.File object
         file = discord.File(image, filename=f"design_{side}.png")
 
@@ -96,6 +106,10 @@ async def design(interaction: discord.Interaction, prompt: str, side: str = "fro
         response_msg = f"Aight, here's the {side} design for '{prompt}'."
         if reference_image_bytes:
             response_msg += " (Based on your reference image)"
+
+        # Add donation message if at soft limit
+        if rate_check["message"]:
+            response_msg += f"\n\n{rate_check['message']}"
 
         await interaction.followup.send(response_msg, file=file)
 
@@ -135,13 +149,22 @@ class DesignModal(discord.ui.Modal, title="T-Shirt Design"):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
-        prompt = self.prompt_input.value
-        side = self.side_input.value.lower() or "front"
-
-        # Validate side
-        if side not in ["front", "back"]:
-            await interaction.followup.send("Yo, pick either 'front' or 'back' for the side.")
+        # Check rate limit
+        rate_check = rate_limiter.check_rate_limit(interaction.user.id)
+        if not rate_check["allowed"]:
+            await interaction.followup.send(rate_check["message"])
             return
+
+        prompt = self.prompt_input.value
+
+        # Handle side input - default to front if empty or invalid
+        side_value = self.side_input.value
+        if side_value and side_value.strip():
+            side = side_value.strip().lower()
+            if side not in ["front", "back"]:
+                side = "front"  # Default to front if invalid
+        else:
+            side = "front"  # Default to front if empty
 
         # Extract image from the message
         reference_image_bytes = None
@@ -172,14 +195,20 @@ class DesignModal(discord.ui.Modal, title="T-Shirt Design"):
                 await interaction.followup.send("Sorry, I couldn't create the design. Something went wrong with the image generation.")
                 return
 
+            # Record the generation
+            rate_limiter.record_generation(interaction.user.id)
+
             # Create discord.File object
             file = discord.File(image, filename=f"design_{side}.png")
 
             # Send the image
-            await interaction.followup.send(
-                f"Aight, here's the {side} design based on that image: '{prompt}'",
-                file=file
-            )
+            response_msg = f"Aight, here's the {side} design based on that image: '{prompt}'"
+
+            # Add donation message if at soft limit
+            if rate_check["message"]:
+                response_msg += f"\n\n{rate_check['message']}"
+
+            await interaction.followup.send(response_msg, file=file)
 
         except Exception as e:
             logger.error(f"Error in context menu design command: {e}", exc_info=True)
