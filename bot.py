@@ -8,6 +8,7 @@ from openai_client import get_openai_response
 from utils import send_response, setup_logger
 from gemini_client import generate_shirt_designs
 import io
+import aiohttp
 
 logger = setup_logger(__name__)
 
@@ -49,10 +50,11 @@ async def on_message(message: discord.Message):
 @bot.tree.command(name="design", description="Create a new t-shirt design for the Kannakickback.")
 @app_commands.describe(
     prompt="A description of the design you want to add to the shirt.",
-    side="Which side of the shirt to design: 'front' or 'back' (defaults to front)"
+    side="Which side of the shirt to design: 'front' or 'back' (defaults to front)",
+    reference_image="Optional: Attach an image to use as reference for the design"
 )
-async def design(interaction: discord.Interaction, prompt: str, side: str = "front"):
-    """Creates a t-shirt design using user's prompt."""
+async def design(interaction: discord.Interaction, prompt: str, side: str = "front", reference_image: discord.Attachment = None):
+    """Creates a t-shirt design using user's prompt, optionally with a reference image."""
     await interaction.response.defer() # Defer the response to avoid timeouts
 
     # Validate the side parameter
@@ -62,8 +64,26 @@ async def design(interaction: discord.Interaction, prompt: str, side: str = "fro
         return
 
     try:
+        # Download reference image if provided
+        reference_image_bytes = None
+        if reference_image:
+            # Validate it's an image
+            if not reference_image.content_type or not reference_image.content_type.startswith('image/'):
+                await interaction.followup.send("Yo, that attachment ain't an image. Upload a PNG, JPG, or similar.")
+                return
+
+            logger.info(f"Downloading reference image: {reference_image.filename}")
+            async with aiohttp.ClientSession() as session:
+                async with session.get(reference_image.url) as resp:
+                    if resp.status == 200:
+                        reference_image_bytes = await resp.read()
+                        logger.info(f"Reference image downloaded: {len(reference_image_bytes)} bytes")
+                    else:
+                        await interaction.followup.send("Couldn't download that image. Try again.")
+                        return
+
         # Generate the image
-        image = await generate_shirt_designs(prompt, side)
+        image = await generate_shirt_designs(prompt, side, reference_image_bytes)
 
         if not image:
             await interaction.followup.send("Sorry, I couldn't create the design. Something went wrong with the image generation.")
@@ -73,11 +93,94 @@ async def design(interaction: discord.Interaction, prompt: str, side: str = "fro
         file = discord.File(image, filename=f"design_{side}.png")
 
         # Send the image
-        await interaction.followup.send(
-            f"Aight, here's the {side} design for '{prompt}'.",
-            file=file
-        )
+        response_msg = f"Aight, here's the {side} design for '{prompt}'."
+        if reference_image_bytes:
+            response_msg += " (Based on your reference image)"
+
+        await interaction.followup.send(response_msg, file=file)
 
     except Exception as e:
-        logger.error(f"Error in /design command: {e}")
+        logger.error(f"Error in /design command: {e}", exc_info=True)
         await interaction.followup.send("Man, something went sideways. I couldn't finish the design. Try again in a bit.")
+
+
+@bot.tree.context_menu(name="Design from Image")
+async def design_from_image(interaction: discord.Interaction, message: discord.Message):
+    """Right-click context menu to create a t-shirt design from an image in a message."""
+    await interaction.response.send_modal(DesignModal(message))
+
+
+class DesignModal(discord.ui.Modal, title="T-Shirt Design"):
+    """Modal to collect prompt and side for context menu design command."""
+
+    prompt_input = discord.ui.TextInput(
+        label="Design Description",
+        placeholder="Describe what you want on the shirt...",
+        required=True,
+        max_length=500
+    )
+
+    side_input = discord.ui.TextInput(
+        label="Side (front or back)",
+        placeholder="front",
+        required=False,
+        default="front",
+        max_length=5
+    )
+
+    def __init__(self, message: discord.Message):
+        super().__init__()
+        self.message = message
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+        prompt = self.prompt_input.value
+        side = self.side_input.value.lower() or "front"
+
+        # Validate side
+        if side not in ["front", "back"]:
+            await interaction.followup.send("Yo, pick either 'front' or 'back' for the side.")
+            return
+
+        # Extract image from the message
+        reference_image_bytes = None
+        if self.message.attachments:
+            for attachment in self.message.attachments:
+                if attachment.content_type and attachment.content_type.startswith('image/'):
+                    logger.info(f"Downloading image from message: {attachment.filename}")
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(attachment.url) as resp:
+                            if resp.status == 200:
+                                reference_image_bytes = await resp.read()
+                                logger.info(f"Image downloaded: {len(reference_image_bytes)} bytes")
+                                break
+                            else:
+                                await interaction.followup.send("Couldn't download that image. Try again.")
+                                return
+
+        if not reference_image_bytes:
+            await interaction.followup.send("Yo, that message don't have an image attached. Right-click on a message with an image.")
+            return
+
+        try:
+            # Generate the design
+            logger.info(f"Generating design from context menu: prompt='{prompt}', side='{side}'")
+            image = await generate_shirt_designs(prompt, side, reference_image_bytes)
+
+            if not image:
+                await interaction.followup.send("Sorry, I couldn't create the design. Something went wrong with the image generation.")
+                return
+
+            # Create discord.File object
+            file = discord.File(image, filename=f"design_{side}.png")
+
+            # Send the image
+            await interaction.followup.send(
+                f"Aight, here's the {side} design based on that image: '{prompt}'",
+                file=file
+            )
+
+        except Exception as e:
+            logger.error(f"Error in context menu design command: {e}", exc_info=True)
+            await interaction.followup.send("Man, something went sideways. I couldn't finish the design. Try again in a bit.")

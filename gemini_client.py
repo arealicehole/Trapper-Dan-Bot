@@ -12,13 +12,14 @@ try:
 except KeyError:
     raise ValueError("GEMINI_API_KEY environment variable not set. Please add it to your .env file.")
 
-async def generate_shirt_designs(user_prompt: str, side: str = "front"):
+async def generate_shirt_designs(user_prompt: str, side: str = "front", reference_image: bytes = None):
     """
     Generates a single t-shirt design image using Gemini 2.5 Flash.
 
     Args:
         user_prompt: The user's creative direction for the design.
         side: Which side of the shirt to design - "front" or "back" (default: "front").
+        reference_image: Optional bytes of a reference image to base the design on.
 
     Returns:
         A BytesIO object containing the generated image, or None if generation fails.
@@ -26,34 +27,54 @@ async def generate_shirt_designs(user_prompt: str, side: str = "front"):
 
     # --- Prompt Engineering ---
 
+    # Build base prompt based on side
     if side == "front":
-        # Create a detailed and specific prompt for the front of the shirt.
-        prompt = (
+        base_description = (
             f"Generate a photorealistic image of a black long-sleeve t-shirt laid flat on a neutral, clean, light-grey background. "
             f"The shirt should be perfectly centered. "
             f"On the chest of the shirt, there must be a high-quality, professional graphic. "
+        )
+    else:  # back
+        base_description = (
+            f"Generate a photorealistic image of the back of a black long-sleeve t-shirt laid flat on a neutral, clean, light-grey background. "
+            f"The shirt should be perfectly centered. "
+            f"Across the shoulder blades, there should be a high-quality, professional graphic. "
+        )
+
+    # Add reference image context or user prompt
+    if reference_image:
+        prompt = (
+            base_description +
+            f"The graphic design should be inspired by the reference image provided, incorporating elements and style from it. "
+            f"Additional creative direction: '{user_prompt}'. "
+            f"The design must also feature the text 'Kanna Kickback 6'. "
+            f"The overall style should be modern streetwear. This is a product mockup."
+        )
+    else:
+        prompt = (
+            base_description +
             f"This graphic must be based on the following creative description: '{user_prompt}'. "
             f"The design must also prominently and stylistically feature the text 'Kanna Kickback 6'. "
             f"The overall style should be modern streetwear. This is a product mockup."
         )
-    else:  # back
-        # Create a prompt for the back of the shirt.
-        prompt = (
-            f"Generate a photorealistic image of the back of a black long-sleeve t-shirt laid flat on a neutral, clean, light-grey background. "
-            f"The shirt should be perfectly centered. "
-            f"Across the shoulder blades, there should be a high-quality, professional graphic. "
-            f"This graphic must be based on the following creative description: '{user_prompt}'. "
-            f"The design must also feature the text 'Kanna Kickback 6'. "
-            f"The overall style should be modern streetwear. This is a product mockup."
-        )
 
     try:
-        logger.info(f"Generating {side} design...")
+        logger.info(f"Generating {side} design{' with reference image' if reference_image else ''}...")
+
+        # Build contents for the API call
+        if reference_image:
+            # Include reference image in the request
+            contents = [
+                types.Part.from_bytes(data=reference_image, mime_type="image/png"),
+                prompt
+            ]
+        else:
+            contents = [prompt]
 
         # Use Gemini 2.5 Flash to generate the image
         response = client.models.generate_content(
             model="gemini-2.5-flash-image",
-            contents=[prompt],
+            contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE"],
                 image_config=types.ImageConfig(aspect_ratio="1:1"),
