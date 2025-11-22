@@ -2,6 +2,7 @@ import json
 import os
 from datetime import datetime, timedelta
 from utils import setup_logger
+import random
 
 logger = setup_logger(__name__)
 
@@ -9,6 +10,23 @@ RATE_LIMIT_FILE = "rate_limits.json"
 SOFT_LIMIT = 10  # Show donation message
 HARD_LIMIT = 20  # Block further generations
 LIMIT_WINDOW_HOURS = 24
+
+# Unique Trapper Dan responses for soft limit (at 10)
+SOFT_LIMIT_RESPONSES = [
+    "Ayy, you cookin' with gas! You got a couple more left, keep it 100. 💯",
+    "Damn fam, you been busy! Got a couple more designs left for ya. 🔥",
+    "Yo you really love this huh? You got a couple more in the tank. 💪",
+    "Sheesh, you on a roll! A couple more left, make 'em count. 🎨",
+    "Aight player, you got a couple more shots left. Let's get it! 🚀",
+]
+
+# Unique responses for hard limit (at 20)
+HARD_LIMIT_RESPONSES = [
+    "Yo fam, you hit the limit! Hit up **A a real ice hole** or **Tricon Digital** to get your limit extended. 💸",
+    "Damn, you maxed out! Holla at **A a real ice hole** or **Tricon Digital** if you need more designs. 🔥",
+    "Aight that's it for now! Contact **A a real ice hole** or **Tricon Digital** to keep going. 💯",
+    "You tapped out the daily limit! Hit **A a real ice hole** or **Tricon Digital** to extend it. 📞",
+]
 
 class RateLimiter:
     def __init__(self):
@@ -60,27 +78,21 @@ class RateLimiter:
         count = len(self.data.get(user_id, []))
 
         if count >= HARD_LIMIT:
+            # Hard limit - block and tell them to contact A a real ice hole or Tricon Digital
             return {
                 "allowed": False,
                 "count": count,
-                "message": (
-                    f"Yo fam, you've hit the daily limit ({HARD_LIMIT} designs in 24 hours). "
-                    "Come back tomorrow or support the bot to keep it running! "
-                    "Cash App: **$trapperdan** 💸"
-                )
+                "message": random.choice(HARD_LIMIT_RESPONSES)
             }
-        elif count >= SOFT_LIMIT:
+        elif count == SOFT_LIMIT:
+            # Soft limit - show unique message when they hit exactly 10
             return {
                 "allowed": True,
                 "count": count,
-                "message": (
-                    f"Ayy, you've made {count} designs today! You're loving this huh? 😎\n"
-                    "If you want to support Trapper Dan Bot and keep it running smooth, "
-                    "consider sending some love to Cash App: **$trapperdan** 💰\n"
-                    f"(You got {HARD_LIMIT - count} more designs left today)"
-                )
+                "message": random.choice(SOFT_LIMIT_RESPONSES)
             }
         else:
+            # Under soft limit or between soft and hard - no message
             return {
                 "allowed": True,
                 "count": count,

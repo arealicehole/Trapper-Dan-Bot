@@ -1,2 +1,5 @@
 .env
 rate_limits.json
+deploy.yaml
+__pycache__/
+r/
