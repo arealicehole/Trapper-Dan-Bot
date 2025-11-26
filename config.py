@@ -6,6 +6,7 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+KIE_API_KEY = os.getenv('KIE_API_KEY')
 IGNORE_PREFIX = "!"
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 MAX_HISTORY = 10

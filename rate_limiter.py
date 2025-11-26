@@ -7,26 +7,48 @@ import random
 logger = setup_logger(__name__)
 
 RATE_LIMIT_FILE = "rate_limits.json"
-SOFT_LIMIT = 10  # Show donation message
-HARD_LIMIT = 20  # Block further generations
 LIMIT_WINDOW_HOURS = 24
 
-# Unique Trapper Dan responses for soft limit (at 10)
-SOFT_LIMIT_RESPONSES = [
-    "Ayy, you cookin' with gas! You got a couple more left, keep it 100. 💯",
-    "Damn fam, you been busy! Got a couple more designs left for ya. 🔥",
-    "Yo you really love this huh? You got a couple more in the tank. 💪",
-    "Sheesh, you on a roll! A couple more left, make 'em count. 🎨",
-    "Aight player, you got a couple more shots left. Let's get it! 🚀",
+# Per-model limits
+MODEL_LIMITS = {
+    "pro": 5,      # Nano Banana Pro (2K, best quality)
+    "grok": 10,    # Grok Imagine (artistic style)
+    "nano": 10     # Nano Banana (1K)
+}
+
+# Model display names
+MODEL_NAMES = {
+    "pro": "Nano Banana Pro",
+    "grok": "Grok Imagine",
+    "nano": "Nano Banana"
+}
+
+# Messages when a specific model limit is hit
+MODEL_LIMIT_RESPONSES = {
+    "pro": [
+        "Yo, you used up your Pro designs for today! Try Grok or Nano instead. 🔥",
+        "Pro tier's maxed out fam! Switch to Grok for that artistic vibe or Nano. 💪",
+        "That's all your Pro shots for today! Grok and Nano still available. 🎨",
+    ],
+    "grok": [
+        "Grok's tapped out for today! Try Pro or Nano instead. 🔥",
+        "No more Grok designs left fam! Switch to Pro or Nano. 💪",
+        "Grok Imagine is done for today! Pro and Nano still available. 🎨",
+    ],
+    "nano": [
+        "Nano tier's maxed out! Try Pro or Grok instead. 🔥",
+        "No more Nano designs left fam! Switch to Pro or Grok. 💪",
+        "Nano is done for today! Pro and Grok still available. 🎨",
+    ]
+}
+
+# Messages when ALL models are exhausted
+ALL_EXHAUSTED_RESPONSES = [
+    "Yo fam, you hit ALL the limits! Hit up **A a real ice hole** or **Tricon Digital** to get extended. 💸",
+    "Damn, you maxed out everything! Holla at **A a real ice hole** or **Tricon Digital** for more. 🔥",
+    "Aight that's ALL models done! Contact **A a real ice hole** or **Tricon Digital** to keep going. 💯",
 ]
 
-# Unique responses for hard limit (at 20)
-HARD_LIMIT_RESPONSES = [
-    "Yo fam, you hit the limit! Hit up **A a real ice hole** or **Tricon Digital** to get your limit extended. 💸",
-    "Damn, you maxed out! Holla at **A a real ice hole** or **Tricon Digital** if you need more designs. 🔥",
-    "Aight that's it for now! Contact **A a real ice hole** or **Tricon Digital** to keep going. 💯",
-    "You tapped out the daily limit! Hit **A a real ice hole** or **Tricon Digital** to extend it. 📞",
-]
 
 class RateLimiter:
     def __init__(self):
@@ -51,63 +73,116 @@ class RateLimiter:
         except Exception as e:
             logger.error(f"Error saving rate limit data: {e}")
 
+    def _ensure_user_structure(self, user_id: str):
+        """Ensure user has proper data structure for per-model tracking."""
+        if user_id not in self.data:
+            self.data[user_id] = {"pro": [], "grok": [], "nano": []}
+        # Handle legacy data format (list instead of dict)
+        if isinstance(self.data[user_id], list):
+            self.data[user_id] = {"pro": [], "grok": [], "nano": []}
+        # Ensure all model keys exist
+        for model in MODEL_LIMITS.keys():
+            if model not in self.data[user_id]:
+                self.data[user_id][model] = []
+
     def _clean_old_entries(self, user_id: str):
         """Remove entries older than 24 hours for a user."""
-        if user_id not in self.data:
-            return
-
+        self._ensure_user_structure(user_id)
         cutoff_time = datetime.now() - timedelta(hours=LIMIT_WINDOW_HOURS)
-        self.data[user_id] = [
-            timestamp for timestamp in self.data[user_id]
-            if datetime.fromisoformat(timestamp) > cutoff_time
-        ]
 
-    def check_rate_limit(self, user_id: str) -> dict:
+        for model in MODEL_LIMITS.keys():
+            self.data[user_id][model] = [
+                timestamp for timestamp in self.data[user_id][model]
+                if datetime.fromisoformat(timestamp) > cutoff_time
+            ]
+
+    def get_model_usage(self, user_id: str, model: str) -> int:
+        """Get current usage count for a specific model."""
+        user_id = str(user_id)
+        self._clean_old_entries(user_id)
+        return len(self.data[user_id].get(model, []))
+
+    def get_all_usage(self, user_id: str) -> dict:
+        """Get usage counts for all models."""
+        user_id = str(user_id)
+        self._clean_old_entries(user_id)
+        return {
+            model: len(self.data[user_id].get(model, []))
+            for model in MODEL_LIMITS.keys()
+        }
+
+    def check_rate_limit(self, user_id: str, model: str) -> dict:
         """
-        Check if user has exceeded rate limits.
+        Check if user can use a specific model.
 
         Returns:
             dict with:
                 - allowed (bool): Whether generation is allowed
-                - count (int): Current generation count in window
+                - model (str): The model being checked
+                - count (int): Current usage count for this model
+                - limit (int): Max allowed for this model
                 - message (str): Message to show user (if any)
+                - alternatives (list): Other models still available
         """
         user_id = str(user_id)
         self._clean_old_entries(user_id)
 
-        count = len(self.data.get(user_id, []))
+        count = self.get_model_usage(user_id, model)
+        limit = MODEL_LIMITS.get(model, 10)
 
-        if count >= HARD_LIMIT:
-            # Hard limit - block and tell them to contact A a real ice hole or Tricon Digital
-            return {
-                "allowed": False,
-                "count": count,
-                "message": random.choice(HARD_LIMIT_RESPONSES)
-            }
-        elif count == SOFT_LIMIT:
-            # Soft limit - show unique message when they hit exactly 10
-            return {
-                "allowed": True,
-                "count": count,
-                "message": random.choice(SOFT_LIMIT_RESPONSES)
-            }
+        # Check what alternatives are available
+        alternatives = []
+        for m, m_limit in MODEL_LIMITS.items():
+            if m != model and self.get_model_usage(user_id, m) < m_limit:
+                alternatives.append(m)
+
+        if count >= limit:
+            # This model is exhausted
+            if not alternatives:
+                # ALL models exhausted
+                return {
+                    "allowed": False,
+                    "model": model,
+                    "count": count,
+                    "limit": limit,
+                    "message": random.choice(ALL_EXHAUSTED_RESPONSES),
+                    "alternatives": []
+                }
+            else:
+                # This model exhausted but others available
+                return {
+                    "allowed": False,
+                    "model": model,
+                    "count": count,
+                    "limit": limit,
+                    "message": random.choice(MODEL_LIMIT_RESPONSES[model]),
+                    "alternatives": alternatives
+                }
         else:
-            # Under soft limit or between soft and hard - no message
+            # Allowed
+            remaining = limit - count
             return {
                 "allowed": True,
+                "model": model,
                 "count": count,
-                "message": None
+                "limit": limit,
+                "message": None,
+                "alternatives": alternatives,
+                "remaining": remaining
             }
 
-    def record_generation(self, user_id: str):
-        """Record a new generation for a user."""
+    def record_generation(self, user_id: str, model: str):
+        """Record a new generation for a user and model."""
         user_id = str(user_id)
-        if user_id not in self.data:
-            self.data[user_id] = []
+        self._ensure_user_structure(user_id)
 
-        self.data[user_id].append(datetime.now().isoformat())
+        self.data[user_id][model].append(datetime.now().isoformat())
         self._save_data()
-        logger.info(f"Recorded generation for user {user_id}. Total in window: {len(self.data[user_id])}")
+
+        count = len(self.data[user_id][model])
+        limit = MODEL_LIMITS[model]
+        logger.info(f"Recorded {MODEL_NAMES[model]} generation for user {user_id}. Usage: {count}/{limit}")
+
 
 # Global instance
 rate_limiter = RateLimiter()
